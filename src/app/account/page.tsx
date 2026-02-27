@@ -22,7 +22,11 @@ import { RewardsTable } from 'src/features/staking/rewards/RewardsTable';
 import { useStakingRewards } from 'src/features/staking/rewards/useStakingRewards';
 import { ActiveStrategyTable } from 'src/features/staking/stCELO/ActiveStrategyTable';
 import { useAnnualProjectedRate } from 'src/features/staking/stCELO/hooks/useAnnualProjectedRate';
-import { useWithdrawals } from 'src/features/staking/stCELO/hooks/useWithdrawals';
+import {
+  PendingStCELOWithdrawal,
+  useWithdrawals,
+} from 'src/features/staking/stCELO/hooks/useWithdrawals';
+import { PendingWithdrawalsTable } from 'src/features/staking/stCELO/PendingWithdrawalsTable';
 import { GroupToStake, StakeActionType, StakingBalances } from 'src/features/staking/types';
 import {
   useActivateStake,
@@ -61,8 +65,9 @@ export default function Page() {
     signingFor,
     groupToStake,
   );
-  const { addressToGroup } = useValidatorGroups();
   const { mode } = useStakingMode();
+  const { addressToGroup } = useValidatorGroups(mode === 'stCELO');
+  const withdrawals = useWithdrawals(address);
 
   const { activateStake } = useActivateStake(() => {
     refetchStakes();
@@ -99,7 +104,11 @@ export default function Page() {
           totalDelegated={totalDelegated}
         />
       ) : (
-        <StCELOAccountStats stCELOBalances={stCELOBalances} address={address} />
+        <StCELOAccountStats
+          stCELOBalances={stCELOBalances}
+          withdrawals={withdrawals.pendingWithdrawals}
+          scheduledWithdrawalAmount={withdrawals.scheduledWithdrawalAmount}
+        />
       )}
       {isVoteSigner || <LockButtons className="flex justify-between md:hidden" mode={mode} />}
       <TableTabs
@@ -111,6 +120,9 @@ export default function Page() {
         addressToDelegatee={addressToDelegatee}
         activateStake={activateStake}
         mode={mode}
+        withdrawals={withdrawals.pendingWithdrawals}
+        isWaitingForNewWithdrawal={withdrawals.isWaitingForNewWithdrawal}
+        scheduledWithdrawalAmount={withdrawals.scheduledWithdrawalAmount}
       />
     </Section>
   );
@@ -137,7 +149,7 @@ function LockButtons({ className, mode }: { className?: string; mode: StakingMod
           <SolidButton
             className="bg-primary text-primary-content"
             onClick={() =>
-              showTxModal(TransactionFlowType.StakeStCELO, { action: StakeActionType.Unstake })
+              showTxModal(TransactionFlowType.UnstakeStCELO, { action: StakeActionType.Unstake })
             }
           >
             <div className="flex items-center space-x-1.5">
@@ -222,16 +234,19 @@ function AccountStats({
 
 function StCELOAccountStats({
   stCELOBalances,
-  address,
+  withdrawals,
+  scheduledWithdrawalAmount,
 }: {
   stCELOBalances: ReturnType<typeof useStCELOBalance>['stCELOBalances'];
-  address: Address | undefined;
+  withdrawals: PendingStCELOWithdrawal[];
+  scheduledWithdrawalAmount: bigint;
 }) {
   const { annualProjectedRate } = useAnnualProjectedRate();
-  const withdrawals = useWithdrawals(address);
   const totalWithdrawals = useMemo(
-    () => withdrawals.pendingWithdrawals.reduce((agg, withdrawal) => agg + withdrawal.amount, 0n),
-    [withdrawals],
+    () =>
+      withdrawals.reduce((agg, withdrawal) => agg + withdrawal.amount, 0n) +
+      scheduledWithdrawalAmount,
+    [withdrawals, scheduledWithdrawalAmount],
   );
   return (
     <div className="items-top items-top flex justify-between">
@@ -288,7 +303,15 @@ function AccountStat({
   );
 }
 
-type Tab = 'stakes' | 'rewards' | 'delegations' | 'history';
+function TabBadge({ label }: { label: string }) {
+  return (
+    <div className="grid min-h-[24px] min-w-[24px] place-items-center rounded-full bg-primary px-1 py-1 text-[10px]">
+      {label}
+    </div>
+  );
+}
+
+type Tab = 'stakes' | 'rewards' | 'delegations' | 'history' | 'withdrawals';
 function TableTabs({
   groupToStake,
   addressToGroup,
@@ -298,6 +321,9 @@ function TableTabs({
   addressToDelegatee,
   activateStake,
   mode,
+  withdrawals,
+  isWaitingForNewWithdrawal,
+  scheduledWithdrawalAmount,
 }: {
   groupToStake?: GroupToStake;
   addressToGroup?: AddressTo<ValidatorGroup>;
@@ -307,9 +333,12 @@ function TableTabs({
   addressToDelegatee?: AddressTo<Delegatee>;
   activateStake: (g: Address) => void;
   mode: StakingMode;
+  withdrawals: PendingStCELOWithdrawal[];
+  isWaitingForNewWithdrawal?: boolean;
+  scheduledWithdrawalAmount?: bigint;
 }) {
   const tabs: Tab[] =
-    mode === 'CELO' ? ['stakes', 'rewards', 'delegations', 'history'] : ['stakes', 'history'];
+    mode === 'CELO' ? ['stakes', 'rewards', 'delegations', 'history'] : ['stakes', 'withdrawals'];
   const { tab, onTabChange } = useTabs<(typeof tabs)[number]>('stakes');
 
   return (
@@ -321,8 +350,16 @@ function TableTabs({
             isActive={tab === tabName}
             onClick={() => onTabChange(tabName)}
           >
-            <span className="text-sm capitalize">
+            <span className=" flex items-center gap-2 text-sm capitalize">
               {tabName === 'stakes' && mode !== 'CELO' ? 'Strategy' : tabName}
+              {tabName === 'withdrawals' &&
+                mode !== 'CELO' &&
+                (() => {
+                  const count =
+                    withdrawals.length +
+                    (scheduledWithdrawalAmount && scheduledWithdrawalAmount > 0n ? 1 : 0);
+                  return count > 0 ? <TabBadge label={count > 10 ? '10+' : `${count}`} /> : null;
+                })()}
             </span>
           </TabHeaderButton>
         ))}
@@ -337,6 +374,13 @@ function TableTabs({
       )}
       {tab === 'stakes' && mode === 'stCELO' && (
         <ActiveStrategyTable addressToGroup={addressToGroup} />
+      )}
+      {tab === 'withdrawals' && mode === 'stCELO' && (
+        <PendingWithdrawalsTable
+          pendingWithdrawals={withdrawals}
+          isWaitingForNewWithdrawal={isWaitingForNewWithdrawal}
+          scheduledWithdrawalAmount={scheduledWithdrawalAmount}
+        />
       )}
       {tab === 'rewards' && (
         <RewardsTable groupToReward={groupToReward} addressToGroup={addressToGroup} />

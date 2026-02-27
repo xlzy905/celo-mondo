@@ -1,38 +1,75 @@
 import clsx from 'clsx';
-import { useCallback } from 'react';
-import { useFeatureFlag } from 'src/utils/useFeatureFlag';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useStakingMode } from 'src/utils/useStakingMode';
 import { useTrackEvent } from 'src/utils/useTrackEvent';
 
 export function ModeToggle() {
-  const { mode, ui, shouldRender, toggleMode } = useStakingMode();
-  const feature = useFeatureFlag();
+  const { mode, shouldRender, selectMode } = useStakingMode();
   const trackEvent = useTrackEvent();
 
-  const handleModeToggle = useCallback(() => {
-    const newMode = mode === 'CELO' ? 'stCELO' : 'CELO';
-    trackEvent('mode_toggled', { mode: newMode });
-    toggleMode();
-  }, [mode, toggleMode, trackEvent]);
-  if (feature !== 'stcelo') {
-    return null;
-  }
+  const celoRef = useRef<HTMLButtonElement>(null);
+  const stCeloRef = useRef<HTMLButtonElement>(null);
+  const [pillStyle, setPillStyle] = useState<{
+    left: number;
+    width: number;
+  } | null>(null);
+  const [enableTransition, setEnableTransition] = useState(false);
+
+  useLayoutEffect(() => {
+    const activeRef = mode === 'CELO' ? celoRef.current : stCeloRef.current;
+    if (activeRef) {
+      setPillStyle({ left: activeRef.offsetLeft, width: activeRef.offsetWidth });
+    }
+  }, [mode]);
+
+  useEffect(() => {
+    setEnableTransition(true);
+  }, []);
+
+  const handleSelect = useCallback(
+    (newMode: 'CELO' | 'stCELO') => {
+      trackEvent('mode_toggled', { mode: newMode });
+      selectMode(newMode);
+    },
+    [selectMode, trackEvent],
+  );
+
   return (
-    <div className={clsx('flex w-[120px] flex-col items-center', !shouldRender && 'hidden')}>
-      <span className="text-md font-serif">{ui.participle}</span>
-      <div className="relative flex justify-end">
-        <input
-          type="checkbox"
-          id="modeToggle"
-          className="peer sr-only"
-          checked={mode === 'stCELO'}
-          onChange={handleModeToggle}
-        />
-        <label
-          htmlFor="modeToggle"
-          className="relative block h-8 w-14 rounded-full bg-taupe-400 transition-colors [-webkit-tap-highlight-color:transparent] peer-checked:bg-purple-300"
-        />
-        <span className="pointer-events-none absolute inset-y-0 start-0 m-1 size-6 rounded-full bg-white transition-[inset-inline-start] peer-checked:start-6" />
+    <div className={clsx('flex items-center', !shouldRender && 'hidden')}>
+      <div className="relative flex rounded-full bg-taupe-300 p-0.5">
+        {/* Sliding background pill */}
+        {pillStyle && (
+          <div
+            className={clsx(
+              'absolute bottom-0.5 top-0.5 rounded-full',
+              enableTransition && 'transition-all duration-300 ease-in-out',
+              mode === 'CELO' ? 'bg-yellow-500' : 'bg-purple-300',
+            )}
+            style={{ left: pillStyle.left, width: pillStyle.width }}
+          />
+        )}
+        <button
+          ref={celoRef}
+          onClick={() => handleSelect('CELO')}
+          title="Stake CELO directly with validator groups"
+          className={clsx(
+            'relative z-10 rounded-full px-4 py-1.5 text-sm font-medium transition-colors duration-300',
+            mode === 'CELO' ? 'text-black' : 'text-taupe-600 hover:text-black',
+          )}
+        >
+          Stake
+        </button>
+        <button
+          ref={stCeloRef}
+          onClick={() => handleSelect('stCELO')}
+          title="Liquid stake CELO to receive stCELO"
+          className={clsx(
+            'relative z-10 rounded-full px-4 py-1.5 text-sm font-medium transition-colors duration-300',
+            mode === 'stCELO' ? 'text-white' : 'text-taupe-600 hover:text-black',
+          )}
+        >
+          Liquid Stake
+        </button>
       </div>
     </div>
   );

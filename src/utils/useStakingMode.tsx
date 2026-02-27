@@ -1,28 +1,28 @@
 'use client';
 
 import { createContext, PropsWithChildren, useCallback, useContext, useEffect } from 'react';
-import { useLockedBalance, useStCELOBalance } from 'src/features/account/hooks';
-import { useFeatureFlag } from 'src/utils/useFeatureFlag';
+import { useStCELOBalance } from 'src/features/account/hooks';
+import { useWithdrawalBot } from 'src/features/staking/stCELO/hooks/useWithdrawals';
 import { useSessionStorage } from 'src/utils/useSessionStorage';
 import { useAccount } from 'wagmi';
 
 export type StakingMode = 'CELO' | 'stCELO';
 function useStakingModeInternal() {
-  const featureFlag = useFeatureFlag();
-  const enabled = featureFlag === 'stcelo';
-
   const { address } = useAccount();
-  const { stCELOBalances, isLoading: stCELOLoading } = useStCELOBalance(address);
-  const { lockedBalance, isLoading: lockedLoading } = useLockedBalance(address);
+  const { stCELOBalances } = useStCELOBalance(address);
   const [mode, setMode] = useSessionStorage<StakingMode>(
     'mode',
-    enabled && stCELOBalances.total > 0 ? 'stCELO' : 'CELO',
+    stCELOBalances.total > 0 ? 'stCELO' : 'CELO',
   );
+
+  useWithdrawalBot(address);
 
   const toggleMode = useCallback(
     () => setMode((mode) => (mode === 'CELO' ? 'stCELO' : 'CELO')),
     [setMode],
   );
+
+  const selectMode = useCallback((newMode: StakingMode) => setMode(newMode), [setMode]);
 
   useEffect(() => {
     document
@@ -34,7 +34,8 @@ function useStakingModeInternal() {
   return {
     mode,
     toggleMode,
-    shouldRender: !stCELOLoading && !lockedLoading && stCELOBalances.total > 0 && lockedBalance > 0,
+    selectMode,
+    shouldRender: true,
     ui: {
       action: (mode === 'stCELO' ? 'Liquid ' : '') + 'Stake',
       participle: (mode === 'stCELO' ? 'Liquid ' : '') + 'Staking',
@@ -44,8 +45,9 @@ function useStakingModeInternal() {
 
 const StakingModeContext = createContext<ReturnType<typeof useStakingModeInternal>>({
   mode: 'CELO',
-  shouldRender: false,
+  shouldRender: true,
   toggleMode: () => null,
+  selectMode: () => null,
   ui: {
     action: 'Stake',
     participle: 'Staking',
